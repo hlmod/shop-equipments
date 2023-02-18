@@ -5,18 +5,7 @@
 #include <sdkhooks>
 #include <shop>
 
-#undef REQUIRE_PLUGIN
-#include <zombiereloaded>
-#include <zriot>
-#include <ToggleEffects>
-
 #define PLUGIN_VERSION	"2.1.1"
-
-new Handle:g_hLookupAttachment = INVALID_HANDLE;
-
-new bool:toggleEffects = false;
-new bool:zombiereloaded = false;
-new bool:zombieriot = false;
 
 new Handle:kv;
 
@@ -24,54 +13,41 @@ new Handle:hTrieEntity[MAXPLAYERS+1];
 new Handle:hTrieItem[MAXPLAYERS+1];
 new Handle:hTimer[MAXPLAYERS+1];
 new String:sClLang[MAXPLAYERS+1][3];
+new String:ClientCategory[MAXPLAYERS+1];
+
+new Float:g_fScale[MAXPLAYERS+1];
 
 new Handle:hCategories;
 
 new Handle:g_hPreview, bool:g_bPreview,
 	Handle:g_hRemoveOnDeath, bool:g_bRemoveOnDeath;
+new Handle:g_hOnLookStartPre;
+new Handle:g_hOnLookStartPost;
+new Handle:g_hOnLookEnd;
 
 public Plugin:myinfo =
 {
     name        = "[Shop] Equipments",
-    author      = "FrozDark",
+    author      = "FrozDark, modify by BaFeR",
     description = "Equipments component for shop",
     version     = PLUGIN_VERSION,
     url         = "www.hlmod.ru"
 };
 
-public APLRes:AskPluginLoad2(Handle:myself, bool:late, String:error[], err_max)
-{
-	MarkNativeAsOptional("ZR_IsClientHuman"); 
-	MarkNativeAsOptional("ZR_IsClientZombie"); 
-	MarkNativeAsOptional("ZRiot_IsClientHuman"); 
-	MarkNativeAsOptional("ZRiot_IsClientZombie"); 
-
-	return APLRes_Success;
-}
-
 public OnPluginStart()
 {
-	new Handle:hGameConf = LoadGameConfigFile("shop_equipments.gamedata");
-	if (hGameConf == INVALID_HANDLE)
-	{
-		SetFailState("gamedata/\"shop_equipments.gamedata.txt\" not found");
-	}
-	StartPrepSDKCall(SDKCall_Entity);
-	PrepSDKCall_SetFromConf(hGameConf, SDKConf_Signature, "LookupAttachment");
-	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_Plain);
-	PrepSDKCall_AddParameter(SDKType_String, SDKPass_Pointer);
-	if ((g_hLookupAttachment = EndPrepSDKCall()) == INVALID_HANDLE)
-	{
-		SetFailState("Could not get \"LookupAttachment\" signature");
-	}
+	Handle hGameConf;
+	
+	hGameConf = LoadGameConfigFile("sdktools.games");
+	if(hGameConf == INVALID_HANDLE)
+		SetFailState("Gamedata file sdktools.games.txt is missing.");
+	int iOffset = GameConfGetOffset(hGameConf, "SetEntityModel");
 	CloseHandle(hGameConf);
+	if(iOffset == -1)
+		SetFailState("Gamedata is missing the \"SetEntityModel\" offset.");
 	
 	HookEvent("player_spawn", Event_PlayerSpawn);
 	HookEvent("player_death", Event_PlayerDeath, EventHookMode_Pre);
-	
-	toggleEffects = LibraryExists("specialfx");
-	zombiereloaded = LibraryExists("zombiereloaded");
-	zombieriot = LibraryExists("zombieriot");
 	
 	hCategories = CreateArray(ByteCountToCells(64));
 	
@@ -80,6 +56,10 @@ public OnPluginStart()
 	g_hPreview = CreateConVar("sm_shop_equipments_preview", "1", "Enables preview for equipments");
 	g_bPreview = GetConVarBool(g_hPreview);
 	HookConVarChange(g_hPreview, OnConVarChange);
+	
+	g_hOnLookStartPre  = CreateForward(ET_Event,  Param_Cell);
+	g_hOnLookStartPost = CreateForward(ET_Ignore, Param_Cell);
+	g_hOnLookEnd	   = CreateForward(ET_Ignore, Param_Cell);
 	
 	g_hRemoveOnDeath = CreateConVar("sm_shop_equipments_remove_on_death", "1", "Removes a player's equipments on death");
 	g_bRemoveOnDeath = GetConVarBool(g_hRemoveOnDeath);
@@ -182,10 +162,14 @@ public Shop_Started()
 							
 							KvGetString(kv, "name", _buffer, sizeof(_buffer), item);
 							Shop_SetInfo(_buffer, "", KvGetNum(kv, "price", 5000), KvGetNum(kv, "sell_price", 2500), Item_Togglable, KvGetNum(kv, "duration", 86400));
-							Shop_SetCallbacks(_, OnEquipItem);
+							
+							if(g_hPreview)
+								Shop_SetCallbacks(_, OnEquipItem, _, _, _, OnPreviewItem);
+							else
+								Shop_SetCallbacks(_, OnEquipItem);
 							
 							KvJumpToKey(kv, "Attributes", true);
-							Shop_KvCopySubKeysCustomInfo(kv);
+							Shop_KvCopySubKeysCustomInfo(view_as<KeyValues>(kv));
 							KvGoBack(kv);
 							
 							Shop_EndItem();
@@ -226,6 +210,8 @@ public Action:Command_Reload(client, args)
 
 public OnMapStart()
 {
+	PrecacheModel("models/error.mdl");
+
 	if (kv == INVALID_HANDLE)
 	{
 		return;
@@ -264,38 +250,6 @@ public OnMapEnd()
 	for (new i = 1; i <= MAXPLAYERS; i++)
 	{
 		hTimer[i] = INVALID_HANDLE;
-	}
-}
-
-public OnLibraryAdded(const String:name[])
-{
-	if (StrEqual(name, "zombiereloaded"))
-	{
-		zombiereloaded = true;
-	}
-	else if (StrEqual(name, "zombieriot"))
-	{
-		zombieriot = true;
-	}
-	else if (StrEqual(name, "specialfx"))
-	{
-		toggleEffects = true;
-	}
-}
-
-public OnLibraryRemoved(const String:name[])
-{
-	if (StrEqual(name, "zombiereloaded"))
-	{
-		zombiereloaded = false;
-	}
-	else if (StrEqual(name, "zombieriot"))
-	{
-		zombieriot = false;
-	}
-	else if (StrEqual(name, "specialfx"))
-	{
-		toggleEffects = false;
 	}
 }
 
@@ -429,7 +383,7 @@ public Action:Event_PlayerDeath(Handle:event, const String:name[], bool:dontBroa
 public Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroadcast)
 {
 	new userid = GetEventInt(event, "userid");
-	CreateTimer(0.1, SpawnTimer, userid, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
+	CreateTimer(1.0, SpawnTimer, userid, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public Action:SpawnTimer(Handle:timer, any:userid)
@@ -476,6 +430,135 @@ public ShopAction:OnEquipItem(client, CategoryId:category_id, const String:categ
 	return Shop_UseOn;
 }
 
+public OnPreviewItem(client, CategoryId:category_id, const String:category[], ItemId:item_id, const String:item[])
+{
+	if (client > 0 && client <= MaxClients)
+	{
+		if(IsPlayerAlive(client))
+		{
+			Dequip(client, category);
+			
+			decl Float:fAng[3], Float:fPos[3];
+
+			decl String:entModel[PLATFORM_MAX_PATH], String:attachment[32], String:alt_attachment[32];
+			entModel[0] = '\0';
+			
+			KvRewind(kv);
+			if (KvJumpToKey(kv, category) && KvJumpToKey(kv, item))
+			{
+				KvGetString(kv, "model", entModel, sizeof(entModel));
+				if (!entModel[0])
+				{
+					KvRewind(kv);
+					return;
+				}
+				
+				decl String:buffer[PLATFORM_MAX_PATH];
+				GetClientModel(client, buffer, sizeof(buffer));
+				ReplaceString(buffer, sizeof(buffer), "/", "\\");
+				if (KvJumpToKey(kv, "classes"))
+				{
+					if (KvJumpToKey(kv, buffer, false))
+					{
+						
+						KvGetString(kv, "attachment", attachment, sizeof(attachment), "facemask");
+						KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
+						KvGetVector(kv, "position", fPos);
+						KvGetVector(kv, "angles", fAng);
+						g_fScale[client] = KvGetFloat(kv, "scale", 1.0);
+					}
+					else
+					{
+						KvGoBack(kv);
+						KvGetString(kv, "attachment", attachment, sizeof(attachment), "facemask");
+						KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
+						KvGetVector(kv, "position", fPos);
+						KvGetVector(kv, "angles", fAng);
+						g_fScale[client] = KvGetFloat(kv, "scale", 1.0);
+					}
+				}
+				else
+				{
+					KvGetString(kv, "attachment", attachment, sizeof(attachment), "facemask");
+					KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
+					KvGetVector(kv, "position", fPos);
+					KvGetVector(kv, "angles", fAng);
+					g_fScale[client] = KvGetFloat(kv, "scale", 1.0);
+				}
+			}
+			KvRewind(kv);
+
+			decl Float:or[3], Float:ang[3],
+				Float:fForward[3],
+				Float:fRight[3],
+			Float:fUp[3];
+			
+			GetClientAbsOrigin(client, or);
+			GetClientAbsAngles(client, ang);
+
+			ang[0] += fAng[0];
+			ang[1] += fAng[1];
+			ang[2] += fAng[2];
+			
+			GetAngleVectors(ang, fForward, fRight, fUp);
+
+			or[0] += fRight[0]*fPos[0] + fForward[0]*fPos[1] + fUp[0]*fPos[2];
+			or[1] += fRight[1]*fPos[0] + fForward[1]*fPos[1] + fUp[1]*fPos[2];
+			or[2] += fRight[2]*fPos[0] + fForward[2]*fPos[1] + fUp[2]*fPos[2];
+
+			new ent = CreateEntityByName("prop_dynamic_override");
+			DispatchKeyValue(ent, "model", entModel);
+			DispatchKeyValue(ent, "spawnflags", "256");
+			DispatchKeyValue(ent, "solid", "0");
+			
+			// We give the name for our entities here
+			decl String:tName[24];
+			Format(tName, sizeof(tName), "shop_equip_%d", ent);
+			DispatchKeyValue(ent, "targetname", tName);
+			
+			DispatchSpawn(ent);	
+
+			new iScaleOfsset = GetEntSendPropOffs(ent, "m_flModelScale", true);
+			if(iScaleOfsset != -1)
+			{
+				SetEntDataFloat(ent, iScaleOfsset, g_fScale[client], true);
+			}
+			
+			AcceptEntityInput(ent, "TurnOn", ent, ent, 0);
+			
+			SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client);
+			
+			SetTrieValue(hTrieEntity[client], category, EntIndexToEntRef(ent), true);
+			
+			SDKHook(ent, SDKHook_SetTransmit, ShouldHide);
+			
+			TeleportEntity(ent, or, ang, NULL_VECTOR); 
+			
+			SetVariantString("!activator");
+			AcceptEntityInput(ent, "SetParent", client, ent, 0);
+			
+			if (attachment[0])
+			{
+				SetVariantString(attachment);
+				AcceptEntityInput(ent, "SetParentAttachmentMaintainOffset", ent, ent, 0);
+			}
+		
+			hTimer[client] = CreateTimer(3.0, SetBackMode_Preview, client, TIMER_FLAG_NO_MAPCHANGE);
+			strcopy(ClientCategory[client], sizeof(ClientCategory), category);
+			Client_SetThirdPersonMode(client, true);
+		}
+		else
+			PrintToChat(client, "Вы мертвы");
+	}
+}
+
+public Action:SetBackMode_Preview(Handle:timer, any:client)
+{
+	Client_SetThirdPersonMode(client, false);
+	Dequip(client, ClientCategory[client]);
+	hTimer[client] = INVALID_HANDLE;
+}
+
 public Action:SetBackMode(Handle:timer, any:client)
 {
 	Client_SetThirdPersonMode(client, false);
@@ -490,22 +573,6 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 	}
 	
 	Dequip(client, category);
-	
-	if (zombiereloaded)
-	{
-		if (ZR_IsClientZombie(client))
-		{
-			return true;
-		}
-	}
-	
-	if (zombieriot)
-	{
-		if (ZRiot_IsClientZombie(client))
-		{
-			return true;
-		}
-	}
 	
 	decl String:item[64];
 	if (!GetTrieString(hTrieItem[client], category, item, sizeof(item)))
@@ -535,10 +602,12 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 		{
 			if (KvJumpToKey(kv, buffer, false))
 			{
+				
 				KvGetString(kv, "attachment", attachment, sizeof(attachment), "forward");
 				KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
 				KvGetVector(kv, "position", fPos);
 				KvGetVector(kv, "angles", fAng);
+				g_fScale[client] = KvGetFloat(kv, "scale", 1.0);
 			}
 			else
 			{
@@ -547,6 +616,7 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 				KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
 				KvGetVector(kv, "position", fPos);
 				KvGetVector(kv, "angles", fAng);
+				g_fScale[client] = KvGetFloat(kv, "scale", 1.0);
 			}
 		}
 		else
@@ -555,28 +625,7 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 			KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
 			KvGetVector(kv, "position", fPos);
 			KvGetVector(kv, "angles", fAng);
-		}
-	
-		if (attachment[0])
-		{
-			if (!LookupAttachment(client, attachment))
-			{
-				if (alt_attachment[0])
-				{
-					if (!LookupAttachment(client, alt_attachment))
-					{
-						PrintToChat(client, "\x04[Shop] \x01Your current model is not supported. Reason: \x04Neither attachment \"\x03%s\x04\" nor \"\x03%s\x04\" is exists on your model (%s)", attachment, alt_attachment, buffer);
-						KvRewind(kv);
-						return false;
-					}
-					strcopy(attachment, sizeof(attachment), alt_attachment);
-				}
-				else
-				{
-					PrintToChat(client, "\x04[Shop] \x01Your current model is not supported. Reason: \x04Attachment \"\x03%s\x04\" is not exists on your model (%s)", attachment, buffer);
-					return false;
-				}
-			}
+			g_fScale[client] = KvGetFloat(kv, "scale", 1.0);
 		}
 	}
 	KvRewind(kv);
@@ -610,6 +659,13 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 	DispatchKeyValue(ent, "targetname", tName);
 	
 	DispatchSpawn(ent);	
+
+	new iScaleOfsset = GetEntSendPropOffs(ent, "m_flModelScale", true);
+	if(iScaleOfsset != -1)
+	{
+		SetEntDataFloat(ent, iScaleOfsset, g_fScale[client], true);
+	}
+	
 	AcceptEntityInput(ent, "TurnOn", ent, ent, 0);
 	
 	SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client);
@@ -682,10 +738,6 @@ public Action:ShouldHide(ent, client)
 	{
 		return Plugin_Continue;
 	}
-	if (toggleEffects && !ShowClientEffects(client))
-	{
-		return Plugin_Handled;
-	}
 	
 	new owner = GetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity");
 	if (owner == client)
@@ -703,36 +755,6 @@ public Action:ShouldHide(ent, client)
 	
 	return Plugin_Continue;
 }
-
-public ZRiot_OnClientHuman(client)
-{
-	CreateTimer(0.1, SpawnTimer, GetClientUserId(client), TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
-}
-
-public ZR_OnClientHumanPost(client, bool:respawn, bool:protect)
-{
-	CreateTimer(0.1, SpawnTimer, GetClientUserId(client), TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
-}
-
-public ZR_OnClientInfected(client, attacker, bool:motherInfect, bool:respawnOverride, bool:respawn)
-{
-	ProcessDequip(client);
-}
-
-public ZRiot_OnClientZombie(client)
-{
-	ProcessDequip(client);
-}
-
-stock bool:LookupAttachment(client, const String:point[])
-{
-    if (g_hLookupAttachment==INVALID_HANDLE) return false;
-    if (client < 1 || !IsClientInGame(client)) return false;
-	
-    return SDKCall(g_hLookupAttachment, client, point);
-}
-
-
 
 new String:_smlib_empty_twodimstring_array[][] = { { '\0' } };
 stock File_AddToDownloadsTable(const String:path[], bool:recursive=true, const String:ignoreExts[][]=_smlib_empty_twodimstring_array, size=0)
@@ -1099,17 +1121,75 @@ stock Client_SetDrawViewModel(client, bool:drawViewModel)
 
 stock Client_SetThirdPersonMode(client, enable=true)
 {
-	if (enable) {
-		Client_SetObserverTarget(client, 0);
-		Client_SetObserverMode(client, OBS_MODE_DEATHCAM, false);
-		Client_SetDrawViewModel(client, false);
-		Client_SetFOV(client, 120);
+	if (enable) 
+	{
+		new Action:result = Plugin_Continue;
+		Call_StartForward(g_hOnLookStartPre);
+		Call_PushCell(client);
+		Call_Finish(result);
+		if (result != Plugin_Continue)
+			return;
+
+		//
+		
+		new entity = CreateEntityByName("prop_dynamic");
+		if (entity <= MaxClients)
+			return;
+		
+		DispatchKeyValue(entity, "model", "models/error.mdl");
+		DispatchKeyValue(entity, "solid", "0");
+		//DispatchKeyValue(entity, "spawnflags", "256");
+		
+		decl Float:v[3];
+		GetClientEyePosition(client, v);
+		decl Float:a[3];
+		GetClientAbsAngles(client, a);
+		
+		a[0] = 0.0;
+		a[2] = 0.0;
+		decl Float:direction[3];
+		GetAngleVectors(a, direction, NULL_VECTOR, NULL_VECTOR);
+		v[0] += direction[0] * 100.0;
+		v[1] += direction[1] * 100.0;
+		
+		DispatchKeyValueVector(entity, "origin", v);
+		a[1] += 180.0;
+		DispatchKeyValueVector(entity, "angles", a);
+		
+		DispatchSpawn(entity);
+		
+		SetEntityRenderMode(entity, RENDER_TRANSCOLOR);
+		SetEntityRenderColor(entity, 255, 255, 255, 0);
+		
+		//
+		
+		SetEntPropEnt(client, Prop_Send, "m_hObserverTarget", 0);
+		SetEntProp(client, Prop_Send, "m_iObserverMode", 1);
+		SetEntProp(client, Prop_Send, "m_bDrawViewmodel", 0);
+		SetEntProp(client, Prop_Send, "m_iFOV", 50);
+		
+		SetEntityMoveType(client, MOVETYPE_NONE);
+		SetClientViewEntity(client, entity);
+		
+		//
+		
+		Call_StartForward(g_hOnLookStartPost);
+		Call_PushCell(client);
+		Call_Finish();
 	}
-	else {
-		Client_SetObserverTarget(client, -1);
-		Client_SetObserverMode(client, OBS_MODE_NONE, false);
-		Client_SetDrawViewModel(client, true);
-		Client_SetFOV(client, 90);
+	else 
+	{
+		SetClientViewEntity(client, client);
+		SetEntityMoveType(client, MOVETYPE_WALK);
+			
+		SetEntPropEnt(client, Prop_Send, "m_hObserverTarget", -1);
+		SetEntProp(client, Prop_Send, "m_iObserverMode", 0);
+		SetEntProp(client, Prop_Send, "m_bDrawViewmodel", 1);
+		SetEntProp(client, Prop_Send, "m_iFOV", 90);
+		
+		Call_StartForward(g_hOnLookEnd);
+		Call_PushCell(client);
+		Call_Finish();
 	}
 }
 
