@@ -18,7 +18,7 @@ jobs:
           echo "GITHUB_SHA_SHORT=${GITHUB_SHA::7}" >> $GITHUB_ENV
           SMVERSION_FULL=${{ matrix.sm-version }}
           echo "SMVERSION_SHORT=${SMVERSION_FULL:0:-2}" >> $GITHUB_ENV
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Setup SP
         uses: rumblefrog/setup-sp@master
@@ -27,17 +27,19 @@ jobs:
 
       - name: Run compiler
         run: |
-          wget -O addons/sourcemod/scripting/include/shop.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop.inc
-          wget -O addons/sourcemod/scripting/include/shop/admin.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/admin.inc
-          wget -O addons/sourcemod/scripting/include/shop/db.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/db.inc
-          wget -O addons/sourcemod/scripting/include/shop/functions.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/functions.inc
-          wget -O addons/sourcemod/scripting/include/shop/items.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/items.inc
-          wget -O addons/sourcemod/scripting/include/shop/methodmaps.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/methodmaps.inc
-          wget -O addons/sourcemod/scripting/include/shop/players.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/players.inc
-          wget -O addons/sourcemod/scripting/include/shop/register.inc https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/register.inc
+          wget -O addons/sourcemod/scripting/include/shop.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop.inc"
+          wget -O addons/sourcemod/scripting/include/shop/admin.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/admin.inc"
+          wget -O addons/sourcemod/scripting/include/shop/db.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/db.inc"
+          wget -O addons/sourcemod/scripting/include/shop/functions.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/functions.inc"
+          wget -O addons/sourcemod/scripting/include/shop/items.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/items.inc"
+          wget -O addons/sourcemod/scripting/include/shop/methodmaps.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/methodmaps.inc"
+          wget -O addons/sourcemod/scripting/include/shop/players.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/players.inc"
+          wget -O addons/sourcemod/scripting/include/shop/register.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/register.inc"
           cd addons/sourcemod
           mkdir plugins
           cd scripting
+          ls
+          ls ./shop
           spcomp shop_equipments.sp -E -o ../plugins/shop_equipments.smx -iinclude ${{ matrix.compiler-options }}
       - name: Upload artifact
         uses: actions/upload-artifact@v3
