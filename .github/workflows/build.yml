@@ -28,6 +28,7 @@ jobs:
       - name: Run compiler
         run: |
           wget -O ${{ env.includePath }}/shop.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop.inc"
+          mkdir ${{ env.includePath }}/shop
           wget -O ${{ env.includePath }}/shop/admin.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/admin.inc"
           wget -O ${{ env.includePath }}/shop/db.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/db.inc"
           wget -O ${{ env.includePath }}/shop/functions.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/functions.inc"
@@ -38,8 +39,6 @@ jobs:
           cd addons/sourcemod
           mkdir plugins
           cd scripting
-          ls
-          ls ./shop
           spcomp shop_equipments.sp -E -o ../plugins/shop_equipments.smx -iinclude ${{ matrix.compiler-options }}
       - name: Upload artifact
         uses: actions/upload-artifact@v3
