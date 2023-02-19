@@ -436,7 +436,7 @@ public Action SetBackMode(Handle timer, any client)
 
 bool Equip(int client, const char[] category, bool from_select = false)
 {
-	if (!IsPlayerAlive(client))
+	if (!IsClientInGame(client) || !IsPlayerAlive(client))
 	{
 		return true;
 	}
