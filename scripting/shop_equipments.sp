@@ -5,83 +5,86 @@
 #include <sdkhooks>
 #include <shop>
 
-#define PLUGIN_VERSION	"2.1.1"
+#define PLUGIN_VERSION	"3.0.0"
+#pragma newdecls required
 
-new Handle:g_hLookupAttachment = INVALID_HANDLE;
+Handle g_hLookupAttachment = null;
 
-new Handle:kv;
+KeyValues kv;
 
-new Handle:hTrieEntity[MAXPLAYERS+1];
-new Handle:hTrieItem[MAXPLAYERS+1];
-new Handle:hTimer[MAXPLAYERS+1];
-new String:sClLang[MAXPLAYERS+1][3];
+StringMap hTrieEntity[MAXPLAYERS+1];
+StringMap hTrieItem[MAXPLAYERS+1];
+Handle hTimer[MAXPLAYERS+1];
+char sClLang[MAXPLAYERS+1][3];
 
-new Handle:hCategories;
+ArrayList hCategories;
 
-new Handle:g_hPreview, bool:g_bPreview,
-	Handle:g_hRemoveOnDeath, bool:g_bRemoveOnDeath;
+ConVar g_hPreview;
+bool g_bPreview;
+ConVar g_hRemoveOnDeath;
+bool g_bRemoveOnDeath;
 
-public Plugin:myinfo =
+public Plugin myinfo =
 {
     name        = "[Shop] Equipments",
-    author      = "FrozDark",
+    author      = "FrozDark (Shop Core team)",
     description = "Equipments component for shop",
     version     = PLUGIN_VERSION,
     url         = "www.hlmod.ru"
 };
 
-public OnPluginStart()
+public void OnPluginStart()
 {
-	new Handle:hGameConf = LoadGameConfigFile("shop_equipments.gamedata");
-	if (hGameConf == INVALID_HANDLE)
+	Handle hGameConf = LoadGameConfigFile("sdktools.games");
+	if (hGameConf == null)
 	{
-		SetFailState("gamedata/\"shop_equipments.gamedata.txt\" not found");
+		SetFailState("Not found gamedata - sdktools.games");
 	}
 	StartPrepSDKCall(SDKCall_Entity);
 	PrepSDKCall_SetFromConf(hGameConf, SDKConf_Signature, "LookupAttachment");
 	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_Plain);
 	PrepSDKCall_AddParameter(SDKType_String, SDKPass_Pointer);
-	if ((g_hLookupAttachment = EndPrepSDKCall()) == INVALID_HANDLE)
+	if ((g_hLookupAttachment = EndPrepSDKCall()) == null)
 	{
 		SetFailState("Could not get \"LookupAttachment\" signature");
 	}
-	CloseHandle(hGameConf);
+	delete hGameConf;
 	
 	HookEvent("player_spawn", Event_PlayerSpawn);
 	HookEvent("player_death", Event_PlayerDeath, EventHookMode_Pre);
 	
-	hCategories = CreateArray(ByteCountToCells(64));
+	hCategories = new ArrayList(ByteCountToCells(SHOP_MAX_STRING_LENGTH));
 	
 	RegAdminCmd("equipments_reload", Command_Reload, ADMFLAG_ROOT, "Reloads equipments configuration");
 	
 	g_hPreview = CreateConVar("sm_shop_equipments_preview", "1", "Enables preview for equipments");
-	g_bPreview = GetConVarBool(g_hPreview);
-	HookConVarChange(g_hPreview, OnConVarChange);
+	g_bPreview = g_hPreview.BoolValue;
+	g_hPreview.AddChangeHook(OnConVarChange);
 	
 	g_hRemoveOnDeath = CreateConVar("sm_shop_equipments_remove_on_death", "1", "Removes a player's equipments on death");
-	g_bRemoveOnDeath = GetConVarBool(g_hRemoveOnDeath);
-	HookConVarChange(g_hRemoveOnDeath, OnConVarChange);
+	g_bRemoveOnDeath = g_hRemoveOnDeath.BoolValue;
+	g_hRemoveOnDeath.AddChangeHook(OnConVarChange);
 	
 	AutoExecConfig(true, "shop_equipments", "shop");
 	
 	StartPlugin();
 }
 
-public OnConVarChange(Handle:convar, const String:oldValue[], const String:newValue[])
+public void OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue)
 {
 	if (convar == g_hPreview)
 	{
-		g_bPreview = bool:StringToInt(newValue);
+		g_bPreview = view_as<bool>(StringToInt(newValue));
 	}
 	else if (convar == g_hRemoveOnDeath)
 	{
-		g_bRemoveOnDeath = bool:StringToInt(newValue);
+		g_bRemoveOnDeath = view_as<bool>(StringToInt(newValue));
 	}
 }
 
-StartPlugin()
+void StartPlugin()
 {
-	for (new i = 1; i <= MaxClients; i++)
+	for (int i = 1; i <= MaxClients; ++i)
 	{
 		if (IsClientConnected(i))
 		{
@@ -96,103 +99,105 @@ StartPlugin()
 	if (Shop_IsStarted()) Shop_Started();
 }
 
-public OnPluginEnd()
+public void OnPluginEnd()
 {
 	Shop_UnregisterMe();
-	for (new i = 1; i <= MaxClients; i++)
+	for (int i = 1; i <= MaxClients; ++i)
 	{
 		OnClientDisconnect(i);
 	}
 }
 
-public Shop_Started()
+public void Shop_Started()
 {
-	if (kv != INVALID_HANDLE)
+	if (kv != null)
 	{
 		CloseHandle(kv);
 	}
 	
-	kv = CreateKeyValues("Equipments");
+	kv = new KeyValues("Equipments");
 	
-	decl String:_buffer[PLATFORM_MAX_PATH];
+	char _buffer[PLATFORM_MAX_PATH];
 	Shop_GetCfgFile(_buffer, sizeof(_buffer), "equipments.txt");
 	
-	if (!FileToKeyValues(kv, _buffer))
+	if (!kv.ImportFromFile(_buffer))
 	{
 		SetFailState("Couldn't parse file %s", _buffer);
 	}
 	
-	ClearArray(hCategories);
+	hCategories.Clear();
 	
-	decl String:lang[3], String:phrase[64];
+	char lang[3];
+	char phrase[SHOP_MAX_STRING_LENGTH];
 	GetLanguageInfo(GetServerLanguage(), lang, sizeof(lang));
 	
-	if (KvGotoFirstSubKey(kv))
+	if (kv.GotoFirstSubKey())
 	{
-		decl String:item[64], String:model[PLATFORM_MAX_PATH];
+		char item[SHOP_MAX_STRING_LENGTH];
+		char model[PLATFORM_MAX_PATH];
 		do 
 		{
-			KvGetSectionName(kv, _buffer, sizeof(_buffer));
+			kv.GetSectionName(_buffer, sizeof(_buffer));
 			if (!_buffer[0]) continue;
 			
-			if (FindStringInArray(hCategories, _buffer) == -1)
+			if (hCategories.FindString(_buffer) == -1)
 			{
-				PushArrayString(hCategories, _buffer);
+				hCategories.PushString(_buffer);
 			}
 			
-			KvGetString(kv, lang, phrase, sizeof(phrase), "LangError");
-			new CategoryId:category_id = Shop_RegisterCategory(_buffer, phrase, "", OnCategoryDisplay);
+			kv.GetString(lang, phrase, sizeof(phrase), "LangError");
+			CategoryId category_id = Shop_RegisterCategory(_buffer, phrase, "", OnCategoryDisplay);
 			
-			decl symbol;
-			KvGetSectionSymbol(kv, symbol);
-			if (KvGotoFirstSubKey(kv))
+			int symbol;
+			kv.GetSectionSymbol(symbol);
+			if (kv.GotoFirstSubKey())
 			{
 				do 
 				{
-					if (KvGetSectionName(kv, item, sizeof(item)))
+					if (kv.GetSectionName(item, sizeof(item)))
 					{
-						KvGetString(kv, "model", model, sizeof(model));
-						new pos = FindCharInString(model, '.', true);
+						kv.GetString("model", model, sizeof(model));
+						int pos = FindCharInString(model, '.', true);
 						if (pos != -1 && StrEqual(model[pos+1], "mdl", false) && Shop_StartItem(category_id, item))
 						{
 							PrecacheModel(model, true);
 							
-							KvGetString(kv, "name", _buffer, sizeof(_buffer), item);
-							Shop_SetInfo(_buffer, "", KvGetNum(kv, "price", 5000), KvGetNum(kv, "sell_price", 2500), Item_Togglable, KvGetNum(kv, "duration", 86400), KvGetNum(kv, "gold_price", 5000), KvGetNum(kv, "gold_sell_price", 2500));
+							kv.GetString("name", _buffer, sizeof(_buffer), item);
+							Shop_SetInfo(_buffer, "", kv.GetNum("price", 5000), kv.GetNum("sell_price", 2500), Item_Togglable, kv.GetNum("duration", 86400), kv.GetNum("gold_price", 5000), kv.GetNum("gold_sell_price", 2500));
 							Shop_SetCallbacks(_, OnEquipItem);
 							
-							KvJumpToKey(kv, "Attributes", true);
+							kv.JumpToKey("Attributes", true);
 							Shop_KvCopySubKeysCustomInfo(view_as<KeyValues>(kv));
-							KvGoBack(kv);
+							kv.GoBack();
 							
 							Shop_EndItem();
 						}
 					}
 				}
-				while (KvGotoNextKey(kv));
+				while (kv.GotoNextKey());
 				
-				KvRewind(kv);
-				KvJumpToKeySymbol(kv, symbol);
+				kv.Rewind();
+				kv.JumpToKeySymbol(symbol);
 			}
 		}
-		while (KvGotoNextKey(kv));
+		while (kv.GotoNextKey());
 	}
-	KvRewind(kv);
+	kv.Rewind();
 }
 
-public bool:OnCategoryDisplay(client, CategoryId:category_id, const String:category[], const String:name[], String:buffer[], maxlen)
+public bool OnCategoryDisplay(int client, CategoryId category_id, const char[] category, const char[] name, char[] buffer, int maxlen, ShopMenu menu)
 {
-	new bool:result = false;
-	if (KvJumpToKey(kv, category))
+	bool result = false;
+	if (kv.JumpToKey(category))
 	{
-		KvGetString(kv, sClLang[client], buffer, maxlen, name);
+		kv.GetString(sClLang[client], buffer, maxlen, name);
 		result = true;
 	}
-	KvRewind(kv);
+	kv.Rewind();
 	return result;
 }
 
-public Action:Command_Reload(client, args)
+public Action Command_Reload(int client, int args)
 {
 	OnPluginEnd();
 	StartPlugin();
@@ -201,87 +206,87 @@ public Action:Command_Reload(client, args)
 	return Plugin_Handled;
 }
 
-public OnMapStart()
+public void OnMapStart()
 {
-	if (kv == INVALID_HANDLE)
+	if (kv == null)
 	{
 		return;
 	}
 	
-	decl String:buffer[PLATFORM_MAX_PATH];
+	char buffer[PLATFORM_MAX_PATH];
 	Shop_GetCfgFile(buffer, sizeof(buffer), "equipments_downloads.txt");
 	File_ReadDownloadList(buffer);
-	if (KvGotoFirstSubKey(kv))
+	if (kv.GotoFirstSubKey())
 	{
 		do
 		{
-			KvSavePosition(kv);
-			if (KvGotoFirstSubKey(kv))
+			kv.SavePosition();
+			if (kv.GotoFirstSubKey())
 			{
 				do 
 				{
-					KvGetString(kv, "model", buffer, sizeof(buffer));
-					new pos = FindCharInString(buffer, '.', true);
+					kv.GetString("model", buffer, sizeof(buffer));
+					int pos = FindCharInString(buffer, '.', true);
 					if (pos != -1 && StrEqual(buffer[pos+1], "mdl", false))
 					{
 						PrecacheModel(buffer, true);
 					}
-				} while (KvGotoNextKey(kv));
+				} while (kv.GotoNextKey());
 				
-				KvGoBack(kv);
+				kv.GoBack();
 			}
-		} while (KvGotoNextKey(kv));
+		} while (kv.GotoNextKey());
 	}
 	
-	KvRewind(kv);
+	kv.Rewind();
 }
 
-public OnMapEnd()
+public void OnMapEnd()
 {
-	for (new i = 1; i <= MAXPLAYERS; i++)
+	for (int i = 1; i <= MaxClients; i++)
 	{
-		hTimer[i] = INVALID_HANDLE;
+		hTimer[i] = null;
 	}
 }
 
-public OnClientConnected(client)
+public void OnClientConnected(int client)
 {
 	if (IsFakeClient(client))
 	{
 		return;
 	}
 	
-	hTrieEntity[client] = CreateTrie();
-	hTrieItem[client] = CreateTrie();
+	hTrieEntity[client] = new StringMap();
+	hTrieItem[client] = new StringMap();
 }
 
-public OnClientPutInServer(client)
+public void OnClientPutInServer(int client)
 {
 	//SDKHook(client, SDKHook_OnTakeDamagePost, OnTakeDamagePost);
 	GetLanguageInfo(GetClientLanguage(client), sClLang[client], sizeof(sClLang[]));
 }
 
-public OnClientDisconnect(client)
+public void OnClientDisconnect(int client)
 {
 	ProcessDequip(client);
 }
 
-public OnClientDisconnect_Post(client)
+public void OnClientDisconnect_Post(int client)
 {
-	if (hTrieEntity[client] != INVALID_HANDLE)
+	if (hTrieEntity[client] != null)
 	{
-		CloseHandle(hTrieEntity[client]);
-		hTrieEntity[client] = INVALID_HANDLE;
+		delete hTrieEntity[client];
+		hTrieEntity[client] = null;
 	}
-	if (hTrieItem[client] != INVALID_HANDLE)
+	if (hTrieItem[client] != null)
 	{
-		CloseHandle(hTrieItem[client]);
-		hTrieItem[client] = INVALID_HANDLE;
+		delete hTrieItem[client];
+		hTrieItem[client] = null;
 	}
-	if (hTimer[client] != INVALID_HANDLE)
+	if (hTimer[client] != null)
 	{
 		KillTimer(hTimer[client]);
-		hTimer[client] = INVALID_HANDLE;
+		hTimer[client] = null;
 	}
 }
 
@@ -292,12 +297,12 @@ public OnClientDisconnect_Post(client)
 		if (!g_bRemoveOnDeath)
 		{
 			decl String:category[64], String:sModel[PLATFORM_MAX_PATH];
-			for (new i = 0; i < GetArraySize(hCategories); i++)
+			for (new i = 0; i < hCategories.Length; i++)
 			{
-				GetArrayString(hCategories, i, category, sizeof(category));
+				hCategories.GetString(i, category, sizeof(category));
 				
 				new ref = -1;
-				if (!GetTrieValue(hTrieEntity[victim], category, ref))
+				if (!hTrieEntity[victim].GetValue(category, ref))
 				{
 					continue;
 				}
@@ -324,35 +329,35 @@ public OnClientDisconnect_Post(client)
 	}
 }*/
 
-public Action:Event_PlayerDeath(Handle:event, const String:name[], bool:dontBroadcast)
+public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast)
 {
-	new client = GetClientOfUserId(GetEventInt(event, "userid"));
-	if (hTrieEntity[client] == INVALID_HANDLE)
+	int client = GetClientOfUserId(event.GetInt("userid"));
+	if (hTrieEntity[client] == null)
 	{
 		return;
 	}
 	if (!g_bRemoveOnDeath)
 	{
-		decl String:category[64], String:sModel[PLATFORM_MAX_PATH];
-		for (new i = 0; i < GetArraySize(hCategories); i++)
+		char category[SHOP_MAX_STRING_LENGTH]; char sModel[PLATFORM_MAX_PATH];
+		for (int i = 0; i < hCategories.Length; i++)
 		{
-			GetArrayString(hCategories, i, category, sizeof(category));
+			hCategories.GetString(i, category, sizeof(category));
 			
-			new ref = -1;
-			if (!GetTrieValue(hTrieEntity[client], category, ref))
+			int ref = -1;
+			if (!hTrieEntity[client].GetValue(category, ref))
 			{
 				continue;
 			}
 			
-			new entity = EntRefToEntIndex(ref);
+			int entity = EntRefToEntIndex(ref);
 			if (entity != INVALID_ENT_REFERENCE && IsValidEdict(entity))
 			{
 				GetEntPropString(entity, Prop_Data, "m_ModelName", sModel, sizeof(sModel));
 				
-				decl Float:fPos[3];
+				float fPos[3];
 				GetClientEyePosition(client, fPos);
 				
-				new ent = CreateEntityByName("prop_physics");
+				int ent = CreateEntityByName("prop_physics");
 				if (ent != -1)
 				{
 					SetEntProp(ent, Prop_Data, "m_CollisionGroup", 2);
@@ -371,43 +376,43 @@ public Action:Event_PlayerDeath(Handle:event, const String:name[], bool:dontBroa
 	ProcessDequip(client);
 }
 
-public Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroadcast)
+public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast)
 {
-	new userid = GetEventInt(event, "userid");
+	int userid = event.GetInt("userid");
 	CreateTimer(0.1, SpawnTimer, userid, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 }
 
-public Action:SpawnTimer(Handle:timer, any:userid)
+public Action SpawnTimer(Handle timer, any userid)
 {
-	static dum[MAXPLAYERS+1];
+	static int dum[MAXPLAYERS+1];
 	
-	new client = GetClientOfUserId(userid);
-	if (!client || hTrieEntity[client] == INVALID_HANDLE || IsFakeClient(client))
+	int client = GetClientOfUserId(userid);
+	if (!client || hTrieEntity[client] == null || IsFakeClient(client))
 	{
 		dum[client] = 0;
 		return Plugin_Stop;
 	}
 	
-	new size = GetArraySize(hCategories);
+	int size = hCategories.Length;
 	if (!size || dum[client] >= size)
 	{
 		dum[client] = 0;
 		return Plugin_Stop;
 	}
 	
-	decl String:category[64];
-	GetArrayString(hCategories, dum[client]++, category, sizeof(category));
+	char category[SHOP_MAX_STRING_LENGTH];
+	hCategories.GetString(dum[client]++, category, sizeof(category));
 	Equip(client, category);
 	
 	return Plugin_Continue;
 }
 
-public ShopAction:OnEquipItem(client, CategoryId:category_id, const String:category[], ItemId:item_id, const String:item[], bool:isOn, bool:elapsed)
+public ShopAction OnEquipItem(int client, CategoryId category_id, const char[] category, ItemId item_id, const char[] item, bool isOn, bool elapsed)
 {
 	if (isOn || elapsed)
 	{
 		Dequip(client, category);
-		RemoveFromTrie(hTrieItem[client], category);
+		hTrieItem[client].Remove(category);
 		return Shop_UseOff;
 	}
 	
@@ -421,13 +426,15 @@ public ShopAction:OnEquipItem(client, CategoryId:category_id, const String:categ
 	return Shop_UseOn;
 }
 
-public Action:SetBackMode(Handle:timer, any:client)
+public Action SetBackMode(Handle timer, any client)
 {
 	Client_SetThirdPersonMode(client, false);
-	hTimer[client] = INVALID_HANDLE;
+	hTimer[client] = null;
+
+	return Plugin_Handled;
 }
 
-bool:Equip(client, const String:category[], bool:from_select = false)
+bool Equip(int client, const char[] category, bool from_select = false)
 {
 	if (!IsPlayerAlive(client))
 	{
@@ -436,52 +443,54 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 	
 	Dequip(client, category);
 	
-	decl String:item[64];
+	char item[SHOP_MAX_STRING_LENGTH];
 	if (!GetTrieString(hTrieItem[client], category, item, sizeof(item)))
 	{
 		return false;
 	}
 
-	decl Float:fAng[3], Float:fPos[3];
+	float fAng[3];
+	float fPos[3];
 
-	decl String:entModel[PLATFORM_MAX_PATH], String:attachment[32], String:alt_attachment[32];
+	char entModel[PLATFORM_MAX_PATH];
+	char attachment[32]; char alt_attachment[32];
 	entModel[0] = '\0';
 	
-	KvRewind(kv);
-	if (KvJumpToKey(kv, category) && KvJumpToKey(kv, item))
+	kv.Rewind();
+	if (kv.JumpToKey(category) && kv.JumpToKey(item))
 	{
-		KvGetString(kv, "model", entModel, sizeof(entModel));
+		kv.GetString("model", entModel, sizeof(entModel));
 		if (!entModel[0])
 		{
-			KvRewind(kv);
+			kv.Rewind();
 			return false;
 		}
 		
-		decl String:buffer[PLATFORM_MAX_PATH];
+		char buffer[PLATFORM_MAX_PATH];
 		GetClientModel(client, buffer, sizeof(buffer));
 		ReplaceString(buffer, sizeof(buffer), "/", "\\");
-		if (KvJumpToKey(kv, "classes"))
+		if (kv.JumpToKey("classes"))
 		{
-			if (KvJumpToKey(kv, buffer, false))
+			if (kv.JumpToKey(buffer, false))
 			{
-				KvGetString(kv, "attachment", attachment, sizeof(attachment), "forward");
-				KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
+				kv.GetString("attachment", attachment, sizeof(attachment), "forward");
+				kv.GetString("alt_attachment", alt_attachment, sizeof(alt_attachment), "");
 				KvGetVector(kv, "position", fPos);
 				KvGetVector(kv, "angles", fAng);
 			}
 			else
 			{
-				KvGoBack(kv);
-				KvGetString(kv, "attachment", attachment, sizeof(attachment), "forward");
-				KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
+				kv.GoBack();
+				kv.GetString("attachment", attachment, sizeof(attachment), "forward");
+				kv.GetString("alt_attachment", alt_attachment, sizeof(alt_attachment), "");
 				KvGetVector(kv, "position", fPos);
 				KvGetVector(kv, "angles", fAng);
 			}
 		}
 		else
 		{
-			KvGetString(kv, "attachment", attachment, sizeof(attachment), "forward");
-			KvGetString(kv, "alt_attachment", alt_attachment, sizeof(alt_attachment), "");
+			kv.GetString("attachment", attachment, sizeof(attachment), "forward");
+			kv.GetString("alt_attachment", alt_attachment, sizeof(alt_attachment), "");
 			KvGetVector(kv, "position", fPos);
 			KvGetVector(kv, "angles", fAng);
 		}
@@ -495,7 +504,7 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 					if (!LookupAttachment(client, alt_attachment))
 					{
 						PrintToChat(client, "\x04[Shop] \x01Your current model is not supported. Reason: \x04Neither attachment \"\x03%s\x04\" nor \"\x03%s\x04\" is exists on your model (%s)", attachment, alt_attachment, buffer);
-						KvRewind(kv);
+						kv.Rewind();
 						return false;
 					}
 					strcopy(attachment, sizeof(attachment), alt_attachment);
@@ -508,12 +517,13 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 			}
 		}
 	}
-	KvRewind(kv);
+	kv.Rewind();
 
-	decl Float:or[3], Float:ang[3],
-		Float:fForward[3],
-		Float:fRight[3],
-	Float:fUp[3];
+	float or[3];
+	float ang[3];
+	float fForward[3];
+	float fRight[3];
+	float fUp[3];
 	
 	GetClientAbsOrigin(client, or);
 	GetClientAbsAngles(client, ang);
@@ -528,13 +538,13 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 	or[1] += fRight[1]*fPos[0] + fForward[1]*fPos[1] + fUp[1]*fPos[2];
 	or[2] += fRight[2]*fPos[0] + fForward[2]*fPos[1] + fUp[2]*fPos[2];
 
-	new ent = CreateEntityByName("prop_dynamic_override");
+	int ent = CreateEntityByName("prop_dynamic_override");
 	DispatchKeyValue(ent, "model", entModel);
 	DispatchKeyValue(ent, "spawnflags", "256");
 	DispatchKeyValue(ent, "solid", "0");
 	
 	// We give the name for our entities here
-	decl String:tName[24];
+	char tName[24];
 	Format(tName, sizeof(tName), "shop_equip_%d", ent);
 	DispatchKeyValue(ent, "targetname", tName);
 	
@@ -560,10 +570,10 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 	
 	if (from_select && g_bPreview)
 	{
-		if (hTimer[client] != INVALID_HANDLE)
+		if (hTimer[client] != null)
 		{
 			KillTimer(hTimer[client]);
-			hTimer[client] = INVALID_HANDLE;
+			hTimer[client] = null;
 		}
 		
 		hTimer[client] = CreateTimer(1.0, SetBackMode, client, TIMER_FLAG_NO_MAPCHANGE);
@@ -574,45 +584,45 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 	return true;
 }
 
-ProcessDequip(client)
+void ProcessDequip(int client)
 {
-	if (hTrieEntity[client] == INVALID_HANDLE)
+	if (hTrieEntity[client] == null)
 	{
 		return;
 	}
 	
-	decl String:category[64];
-	for (new i = 0; i < GetArraySize(hCategories); i++)
+	char category[SHOP_MAX_STRING_LENGTH];
+	for (int i = 0; i < hCategories.Length; i++)
 	{
-		GetArrayString(hCategories, i, category, sizeof(category));
+		hCategories.GetString(i, category, sizeof(category));
 		Dequip(client, category);
 	}
 }
 
-Dequip(client, const String:category[])
+void Dequip(int client, const char[] category)
 {  
-	new ref = -1;
-	if (!GetTrieValue(hTrieEntity[client], category, ref))
+	int ref = -1;
+	if (!hTrieEntity[client].GetValue(category, ref))
 	{
 		return;
 	}
-	new entity = EntRefToEntIndex(ref);
+	int entity = EntRefToEntIndex(ref);
 	if (entity != INVALID_ENT_REFERENCE && IsValidEdict(entity))
 	{
 		AcceptEntityInput(entity, "Kill");
 	}
 	
-	RemoveFromTrie(hTrieEntity[client], category);
+	hTrieEntity[client].Remove(category);
 }
 
-public Action:ShouldHide(ent, client)
+public Action ShouldHide(int ent, int client)
 {
 	if (Client_IsInThirdPersonMode(client) && IsPlayerAlive(client))
 	{
 		return Plugin_Continue;
 	}
 
-	new owner = GetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity");
+	int owner = GetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity");
 	if (owner == client)
 	{
 		return Plugin_Handled;
@@ -629,16 +639,16 @@ public Action:ShouldHide(ent, client)
 	return Plugin_Continue;
 }
 
-stock bool:LookupAttachment(client, const String:point[])
+stock bool LookupAttachment(int client, const char[] point)
 {
-    if (g_hLookupAttachment==INVALID_HANDLE) return false;
+    if (g_hLookupAttachment==null) return false;
     if (client < 1 || !IsClientInGame(client)) return false;
 	
     return SDKCall(g_hLookupAttachment, client, point);
 }
 
-new String:_smlib_empty_twodimstring_array[][] = { { '\0' } };
-stock File_AddToDownloadsTable(const String:path[], bool:recursive=true, const String:ignoreExts[][]=_smlib_empty_twodimstring_array, size=0)
+char _smlib_empty_twodimstring_array[][] = { { '\0' } };
+stock void File_AddToDownloadsTable(const char[] path, bool recursive=true, const char[][] ignoreExts=_smlib_empty_twodimstring_array, int size=0)
 {
 	if (path[0] == '\0') {
 		return;
@@ -646,7 +656,7 @@ stock File_AddToDownloadsTable(const String:path[], bool:recursive=true, const S
 
 	if (FileExists(path)) {
 		
-		decl String:fileExtension[4];
+		char fileExtension[4];
 		File_GetExtension(path, fileExtension, sizeof(fileExtension));
 		
 		if (StrEqual(fileExtension, "bz2", false) || StrEqual(fileExtension, "ztmp", false)) {
@@ -667,10 +677,10 @@ stock File_AddToDownloadsTable(const String:path[], bool:recursive=true, const S
 	
 	else if (recursive && DirExists(path)) {
 
-		decl String:dirEntry[PLATFORM_MAX_PATH];
-		new Handle:__dir = OpenDirectory(path);
+		char dirEntry[PLATFORM_MAX_PATH];
+		DirectoryListing __dir = OpenDirectory(path);
 
-		while (ReadDirEntry(__dir, dirEntry, sizeof(dirEntry))) {
+		while (__dir.GetNext(dirEntry, sizeof(dirEntry))) {
 
 			if (StrEqual(dirEntry, ".") || StrEqual(dirEntry, "..")) {
 				continue;
@@ -680,26 +690,24 @@ stock File_AddToDownloadsTable(const String:path[], bool:recursive=true, const S
 			File_AddToDownloadsTable(dirEntry, recursive, ignoreExts, size);
 		}
 		
-		CloseHandle(__dir);
+		delete __dir;
 	}
 	else if (FindCharInString(path, '*', true)) {
 		
-		new String:fileExtension[4];
+		char fileExtension[4];
 		File_GetExtension(path, fileExtension, sizeof(fileExtension));
 
 		if (StrEqual(fileExtension, "*")) {
-
-			decl
-				String:dirName[PLATFORM_MAX_PATH],
-				String:fileName[PLATFORM_MAX_PATH],
-				String:dirEntry[PLATFORM_MAX_PATH];
+			char dirName[PLATFORM_MAX_PATH];
+			char fileName[PLATFORM_MAX_PATH];
+			char dirEntry[PLATFORM_MAX_PATH];
 
 			File_GetDirName(path, dirName, sizeof(dirName));
 			File_GetFileName(path, fileName, sizeof(fileName));
 			StrCat(fileName, sizeof(fileName), ".");
 
-			new Handle:__dir = OpenDirectory(dirName);
-			while (ReadDirEntry(__dir, dirEntry, sizeof(dirEntry))) {
+			DirectoryListing __dir = OpenDirectory(dirName);
+			while (__dir.GetNext(dirEntry, sizeof(dirEntry))) {
 
 				if (StrEqual(dirEntry, ".") || StrEqual(dirEntry, "..")) {
 					continue;
@@ -711,26 +719,26 @@ stock File_AddToDownloadsTable(const String:path[], bool:recursive=true, const S
 				}
 			}
 
-			CloseHandle(__dir);
+			delete __dir;
 		}
 	}
 
 	return;
 }
 
-stock bool:File_ReadDownloadList(const String:path[])
+stock bool File_ReadDownloadList(const char[] path)
 {
-	new Handle:file = OpenFile(path, "r");
+	File file = OpenFile(path, "r");
 	
-	if (file  == INVALID_HANDLE) {
+	if (file == null) {
 		return false;
 	}
 
-	new String:buffer[PLATFORM_MAX_PATH];
-	while (!IsEndOfFile(file)) {
-		ReadFileLine(file, buffer, sizeof(buffer));
+	char buffer[PLATFORM_MAX_PATH];
+	while (!file.EndOfFile()) {
+		file.ReadLine(buffer, sizeof(buffer));
 		
-		new pos;
+		int pos;
 		pos = StrContains(buffer, "//");
 		if (pos != -1) {
 			buffer[pos] = '\0';
@@ -755,14 +763,14 @@ stock bool:File_ReadDownloadList(const String:path[])
 		File_AddToDownloadsTable(buffer);
 	}
 
-	CloseHandle(file);
+	delete file;
 	
 	return true;
 }
 
-stock File_GetExtension(const String:path[], String:buffer[], size)
+stock void File_GetExtension(const char[] path, char[] buffer, int size)
 {
-	new extpos = FindCharInString(path, '.', true);
+	int extpos = FindCharInString(path, '.', true);
 	
 	if (extpos == -1)
 	{
@@ -773,9 +781,9 @@ stock File_GetExtension(const String:path[], String:buffer[], size)
 	strcopy(buffer, size, path[++extpos]);
 }
 
-stock Math_GetRandomInt(min, max)
+stock int Math_GetRandomInt(int min, int max)
 {
-	new random = GetURandomInt();
+	int random = GetURandomInt();
 	
 	if (random == 0)
 		random++;
@@ -783,13 +791,13 @@ stock Math_GetRandomInt(min, max)
 	return RoundToCeil(float(random) / (float(2147483647) / float(max - min + 1))) + min - 1;
 }
 
-stock Array_FindString(const String:array[][], size, const String:str[], bool:caseSensitive=true, start=0)
+stock int Array_FindString(const char[][] array, int size, const char[] str, bool caseSensitive=true, int start=0)
 {
 	if (start < 0) {
 		start = 0;
 	}
 
-	for (new i=start; i < size; i++) {
+	for (int i = start; i < size; i++) {
 
 		if (StrEqual(array[i], str, caseSensitive)) {
 			return i;
@@ -799,7 +807,7 @@ stock Array_FindString(const String:array[][], size, const String:str[], bool:ca
 	return -1;
 }
 
-stock bool:File_GetFileName(const String:path[], String:buffer[], size)
+stock void File_GetFileName(const char[] path, char[] buffer, int size)
 {	
 	if (path[0] == '\0') {
 		buffer[0] = '\0';
@@ -808,21 +816,21 @@ stock bool:File_GetFileName(const String:path[], String:buffer[], size)
 	
 	File_GetBaseName(path, buffer, size);
 	
-	new pos_ext = FindCharInString(buffer, '.', true);
+	int pos_ext = FindCharInString(buffer, '.', true);
 
 	if (pos_ext != -1) {
 		buffer[pos_ext] = '\0';
 	}
 }
 
-stock bool:File_GetDirName(const String:path[], String:buffer[], size)
+stock void File_GetDirName(const char[] path, char[] buffer, int size)
 {	
 	if (path[0] == '\0') {
 		buffer[0] = '\0';
 		return;
 	}
 	
-	new pos_start = FindCharInString(path, '/', true);
+	int pos_start = FindCharInString(path, '/', true);
 	
 	if (pos_start == -1) {
 		pos_start = FindCharInString(path, '\\', true);
@@ -837,14 +845,14 @@ stock bool:File_GetDirName(const String:path[], String:buffer[], size)
 	buffer[pos_start] = '\0';
 }
 
-stock bool:File_GetBaseName(const String:path[], String:buffer[], size)
+stock void File_GetBaseName(const char[] path, char[] buffer, int size)
 {	
 	if (path[0] == '\0') {
 		buffer[0] = '\0';
 		return;
 	}
 	
-	new pos_start = FindCharInString(path, '/', true);
+	int pos_start = FindCharInString(path, '/', true);
 	
 	if (pos_start == -1) {
 		pos_start = FindCharInString(path, '\\', true);
@@ -880,12 +888,14 @@ enum Obs_Allow
 	OBS_ALLOW_NUM_MODES,
 };
 
-stock Obs_Mode:Client_GetObserverMode(client)
+stock Obs_Mode Client_GetObserverMode(int client)
 {
-	return Obs_Mode:GetEntProp(client, Prop_Send, "m_iObserverMode");
+	return view_as<Obs_Mode>(
+		GetEntProp(client, Prop_Send, "m_iObserverMode")
+	);
 }
 
-stock bool:Client_SetObserverMode(client, Obs_Mode:mode, bool:updateMoveType=true)
+stock bool Client_SetObserverMode(int client, Obs_Mode mode, bool updateMoveType=true)
 {
 	if (mode < OBS_MODE_NONE || mode >= NUM_OBSERVER_MODES) {
 		return false;
@@ -894,10 +904,10 @@ stock bool:Client_SetObserverMode(client, Obs_Mode:mode, bool:updateMoveType=tru
 	// check mp_forcecamera settings for dead players
 	if (mode > OBS_MODE_FIXED && GetClientTeam(client) > 1)
 	{
-		new Handle:mp_forcecamera = FindConVar("mp_forcecamera");
+		ConVar mp_forcecamera = FindConVar("mp_forcecamera");
 
-		if (mp_forcecamera != INVALID_HANDLE) {
-			switch (GetConVarInt(mp_forcecamera))
+		if (mp_forcecamera != null) {
+			switch (view_as<Obs_Allow>(GetConVarInt(mp_forcecamera)))
 			{
 				case OBS_ALLOW_TEAM: {
 					mode = OBS_MODE_IN_EYE;
@@ -909,13 +919,13 @@ stock bool:Client_SetObserverMode(client, Obs_Mode:mode, bool:updateMoveType=tru
 		}
 	}
 
-	new Obs_Mode:observerMode = Client_GetObserverMode(client);
+	Obs_Mode observerMode = Client_GetObserverMode(client);
 	if (observerMode > OBS_MODE_DEATHCAM) {
 		// remember mode if we were really spectating before
 		Client_SetObserverLastMode(client, observerMode);
 	}
 
-	SetEntProp(client, Prop_Send, "m_iObserverMode", _:mode);
+	SetEntProp(client, Prop_Send, "m_iObserverMode", mode);
 
 	switch (mode) {
 		case OBS_MODE_NONE, OBS_MODE_FIXED, OBS_MODE_DEATHCAM: {
@@ -946,32 +956,34 @@ stock bool:Client_SetObserverMode(client, Obs_Mode:mode, bool:updateMoveType=tru
 	return true;
 }
 
-stock Obs_mode:Client_GetObserverLastMode(client)
+stock Obs_Mode Client_GetObserverLastMode(int client)
 {
-	return Obs_mode:GetEntProp(client, Prop_Data, "m_iObserverLastMode");
+	return view_as<Obs_Mode>(
+		GetEntProp(client, Prop_Data, "m_iObserverLastMode")
+	);
 }
 
-stock Client_SetObserverLastMode(client, Obs_Mode:mode)
+stock void Client_SetObserverLastMode(int client, Obs_Mode mode)
 {
-	SetEntProp(client, Prop_Data, "m_iObserverLastMode", _:mode);
+	SetEntProp(client, Prop_Data, "m_iObserverLastMode", mode);
 }
 
-stock Client_GetViewOffset(client, Float:vec[3])
+stock void Client_GetViewOffset(int client, float vec[3])
 {
 	GetEntPropVector(client, Prop_Data, "m_vecViewOffset", vec);
 }
 
-stock Client_SetViewOffset(client, Float:vec[3])
+stock void Client_SetViewOffset(int client, float vec[3])
 {
 	SetEntPropVector(client, Prop_Data, "m_vecViewOffset", vec);
 }
 
-stock Client_GetObserverTarget(client)
+stock int Client_GetObserverTarget(int client)
 {
 	return GetEntPropEnt(client, Prop_Send, "m_hObserverTarget");
 }
 
-stock Client_SetObserverTarget(client, entity, bool:resetFOV=true)
+stock void Client_SetObserverTarget(int client, int entity, bool resetFOV=true)
 {
 	SetEntPropEnt(client, Prop_Send, "m_hObserverTarget", entity);
 	
@@ -980,27 +992,29 @@ stock Client_SetObserverTarget(client, entity, bool:resetFOV=true)
 	}
 }
 
-stock Client_GetFOV(client)
+stock int Client_GetFOV(int client)
 {
 	return GetEntProp(client, Prop_Send, "m_iFOV");
 }
 
-stock Client_SetFOV(client, value)
+stock void Client_SetFOV(int client, int value)
 {
 	SetEntProp(client, Prop_Send, "m_iFOV", value);
 }
 
-stock bool:Client_DrawViewModel(client)
+stock bool Client_DrawViewModel(int client)
 {
-	return bool:GetEntProp(client, Prop_Send, "m_bDrawViewmodel");
+	return view_as<bool>(
+		GetEntProp(client, Prop_Send, "m_bDrawViewmodel")
+	);
 }
 
-stock Client_SetDrawViewModel(client, bool:drawViewModel)
+stock void Client_SetDrawViewModel(int client, bool drawViewModel)
 {
 	SetEntProp(client, Prop_Send, "m_bDrawViewmodel", drawViewModel);
 }
 
-stock Client_SetThirdPersonMode(client, enable=true)
+stock void Client_SetThirdPersonMode(int client, bool enable=true)
 {
 	if (enable) {
 		Client_SetObserverTarget(client, 0);
@@ -1016,7 +1030,7 @@ stock Client_SetThirdPersonMode(client, enable=true)
 	}
 }
 
-stock Client_IsInThirdPersonMode(client)
+stock int Client_IsInThirdPersonMode(int client)
 {
 	return GetEntProp(client, Prop_Data, "m_iObserverMode");
 }
