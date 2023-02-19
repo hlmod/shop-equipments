@@ -27,14 +27,14 @@ jobs:
 
       - name: Run compiler
         run: |
-          wget -O addons/sourcemod/scripting/include/shop.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop.inc"
-          wget -O addons/sourcemod/scripting/include/shop/admin.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/admin.inc"
-          wget -O addons/sourcemod/scripting/include/shop/db.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/db.inc"
-          wget -O addons/sourcemod/scripting/include/shop/functions.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/functions.inc"
-          wget -O addons/sourcemod/scripting/include/shop/items.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/items.inc"
-          wget -O addons/sourcemod/scripting/include/shop/methodmaps.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/methodmaps.inc"
-          wget -O addons/sourcemod/scripting/include/shop/players.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/players.inc"
-          wget -O addons/sourcemod/scripting/include/shop/register.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/register.inc"
+          wget -O ${{ env.includePath }}/shop.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop.inc"
+          wget -O ${{ env.includePath }}/shop/admin.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/admin.inc"
+          wget -O ${{ env.includePath }}/shop/db.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/db.inc"
+          wget -O ${{ env.includePath }}/shop/functions.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/functions.inc"
+          wget -O ${{ env.includePath }}/shop/items.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/items.inc"
+          wget -O ${{ env.includePath }}/shop/methodmaps.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/methodmaps.inc"
+          wget -O ${{ env.includePath }}/shop/players.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/players.inc"
+          wget -O ${{ env.includePath }}/shop/register.inc "https://raw.githubusercontent.com/hlmod/Shop-Core/master/addons/sourcemod/scripting/include/shop/register.inc"
           cd addons/sourcemod
           mkdir plugins
           cd scripting
