@@ -5,18 +5,9 @@
 #include <sdkhooks>
 #include <shop>
 
-#undef REQUIRE_PLUGIN
-#include <zombiereloaded>
-#include <zriot>
-#include <ToggleEffects>
-
 #define PLUGIN_VERSION	"2.1.1"
 
 new Handle:g_hLookupAttachment = INVALID_HANDLE;
-
-new bool:toggleEffects = false;
-new bool:zombiereloaded = false;
-new bool:zombieriot = false;
 
 new Handle:kv;
 
@@ -39,16 +30,6 @@ public Plugin:myinfo =
     url         = "www.hlmod.ru"
 };
 
-public APLRes:AskPluginLoad2(Handle:myself, bool:late, String:error[], err_max)
-{
-	MarkNativeAsOptional("ZR_IsClientHuman"); 
-	MarkNativeAsOptional("ZR_IsClientZombie"); 
-	MarkNativeAsOptional("ZRiot_IsClientHuman"); 
-	MarkNativeAsOptional("ZRiot_IsClientZombie"); 
-
-	return APLRes_Success;
-}
-
 public OnPluginStart()
 {
 	new Handle:hGameConf = LoadGameConfigFile("shop_equipments.gamedata");
@@ -68,10 +49,6 @@ public OnPluginStart()
 	
 	HookEvent("player_spawn", Event_PlayerSpawn);
 	HookEvent("player_death", Event_PlayerDeath, EventHookMode_Pre);
-	
-	toggleEffects = LibraryExists("specialfx");
-	zombiereloaded = LibraryExists("zombiereloaded");
-	zombieriot = LibraryExists("zombieriot");
 	
 	hCategories = CreateArray(ByteCountToCells(64));
 	
@@ -181,11 +158,11 @@ public Shop_Started()
 							PrecacheModel(model, true);
 							
 							KvGetString(kv, "name", _buffer, sizeof(_buffer), item);
-							Shop_SetInfo(_buffer, "", KvGetNum(kv, "price", 5000), KvGetNum(kv, "sell_price", 2500), Item_Togglable, KvGetNum(kv, "duration", 86400));
+							Shop_SetInfo(_buffer, "", KvGetNum(kv, "price", 5000), KvGetNum(kv, "sell_price", 2500), Item_Togglable, KvGetNum(kv, "duration", 86400), KvGetNum(kv, "gold_price", 5000), KvGetNum(kv, "gold_sell_price", 2500));
 							Shop_SetCallbacks(_, OnEquipItem);
 							
 							KvJumpToKey(kv, "Attributes", true);
-							Shop_KvCopySubKeysCustomInfo(kv);
+							Shop_KvCopySubKeysCustomInfo(view_as<KeyValues>(kv));
 							KvGoBack(kv);
 							
 							Shop_EndItem();
@@ -264,38 +241,6 @@ public OnMapEnd()
 	for (new i = 1; i <= MAXPLAYERS; i++)
 	{
 		hTimer[i] = INVALID_HANDLE;
-	}
-}
-
-public OnLibraryAdded(const String:name[])
-{
-	if (StrEqual(name, "zombiereloaded"))
-	{
-		zombiereloaded = true;
-	}
-	else if (StrEqual(name, "zombieriot"))
-	{
-		zombieriot = true;
-	}
-	else if (StrEqual(name, "specialfx"))
-	{
-		toggleEffects = true;
-	}
-}
-
-public OnLibraryRemoved(const String:name[])
-{
-	if (StrEqual(name, "zombiereloaded"))
-	{
-		zombiereloaded = false;
-	}
-	else if (StrEqual(name, "zombieriot"))
-	{
-		zombieriot = false;
-	}
-	else if (StrEqual(name, "specialfx"))
-	{
-		toggleEffects = false;
 	}
 }
 
@@ -491,22 +436,6 @@ bool:Equip(client, const String:category[], bool:from_select = false)
 	
 	Dequip(client, category);
 	
-	if (zombiereloaded)
-	{
-		if (ZR_IsClientZombie(client))
-		{
-			return true;
-		}
-	}
-	
-	if (zombieriot)
-	{
-		if (ZRiot_IsClientZombie(client))
-		{
-			return true;
-		}
-	}
-	
 	decl String:item[64];
 	if (!GetTrieString(hTrieItem[client], category, item, sizeof(item)))
 	{
@@ -682,11 +611,7 @@ public Action:ShouldHide(ent, client)
 	{
 		return Plugin_Continue;
 	}
-	if (toggleEffects && !ShowClientEffects(client))
-	{
-		return Plugin_Handled;
-	}
-	
+
 	new owner = GetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity");
 	if (owner == client)
 	{
@@ -704,26 +629,6 @@ public Action:ShouldHide(ent, client)
 	return Plugin_Continue;
 }
 
-public ZRiot_OnClientHuman(client)
-{
-	CreateTimer(0.1, SpawnTimer, GetClientUserId(client), TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
-}
-
-public ZR_OnClientHumanPost(client, bool:respawn, bool:protect)
-{
-	CreateTimer(0.1, SpawnTimer, GetClientUserId(client), TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
-}
-
-public ZR_OnClientInfected(client, attacker, bool:motherInfect, bool:respawnOverride, bool:respawn)
-{
-	ProcessDequip(client);
-}
-
-public ZRiot_OnClientZombie(client)
-{
-	ProcessDequip(client);
-}
-
 stock bool:LookupAttachment(client, const String:point[])
 {
     if (g_hLookupAttachment==INVALID_HANDLE) return false;
@@ -731,8 +636,6 @@ stock bool:LookupAttachment(client, const String:point[])
 	
     return SDKCall(g_hLookupAttachment, client, point);
 }
-
-
 
 new String:_smlib_empty_twodimstring_array[][] = { { '\0' } };
 stock File_AddToDownloadsTable(const String:path[], bool:recursive=true, const String:ignoreExts[][]=_smlib_empty_twodimstring_array, size=0)
